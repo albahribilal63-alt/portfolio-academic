@@ -211,6 +211,36 @@ export function activeIsolatedTokenUrls(links: IsolatedLink[], config: ServerCon
   });
 }
 
+export function repairUnreadableIsolatedLinkTokens(archive: AcademicArchive, config: ServerConfig, now = Date.now()) {
+  const links = archive.isolatedLinks ?? [];
+  const tokenHashes = new Set(links.map((link) => link.tokenHash));
+  const issuedTokens: Array<{ id: string; token: string }> = [];
+  let changed = false;
+
+  const isolatedLinks = links.map((link) => {
+    if (link.status !== 'active' || (link.expiresAt !== null && Date.parse(link.expiresAt) <= now)) return link;
+    const token = decryptIsolatedToken(config, link.tokenCiphertext);
+    if (token && hashIsolatedToken(token) === link.tokenHash) return link;
+
+    let created = createIsolatedToken();
+    while (tokenHashes.has(created.tokenHash)) created = createIsolatedToken();
+    tokenHashes.add(created.tokenHash);
+    issuedTokens.push({ id: link.id, token: created.token });
+    changed = true;
+    return {
+      ...link,
+      tokenHash: created.tokenHash,
+      tokenCiphertext: encryptIsolatedToken(config, created.token),
+    };
+  });
+
+  return {
+    data: changed ? { ...archive, isolatedLinks } : archive,
+    changed,
+    issuedTokens,
+  };
+}
+
 export function ensurePrimaryProfessorLinks(
   archive: AcademicArchive,
   previous: AcademicArchive,

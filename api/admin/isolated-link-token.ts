@@ -4,7 +4,7 @@ import { getAdminAuthContext, sendAdminFailure } from '../_lib/admin-session.ts'
 import { getServerConfig, type ServerConfig } from '../_lib/config.ts';
 import { ApiError } from '../_lib/errors.ts';
 import { getGithubData, updateGithubData } from '../_lib/github.ts';
-import { activeIsolatedTokenUrls, createIsolatedToken, encryptIsolatedToken, ensurePrimaryProfessorLinks, validateIsolatedScopeType } from '../_lib/isolated-links.ts';
+import { activeIsolatedTokenUrls, createIsolatedToken, encryptIsolatedToken, ensurePrimaryProfessorLinks, repairUnreadableIsolatedLinkTokens, validateIsolatedScopeType } from '../_lib/isolated-links.ts';
 import { readJsonBody, requireJsonContentType, requireRecord, requireSameOrigin, sendFailure, sendSuccess } from '../_lib/http.ts';
 import type { IsolatedLink } from '../../src/types/academic.ts';
 
@@ -97,10 +97,11 @@ async function issueToken(body: Record<string, unknown>, serverConfig: ServerCon
 
 async function provisionPrimaryLinks(serverConfig: ServerConfig) {
   const current = await getGithubData(serverConfig);
-  const provisioned = ensurePrimaryProfessorLinks(current.data, current.data, serverConfig);
+  const repaired = repairUnreadableIsolatedLinkTokens(current.data, serverConfig);
+  const provisioned = ensurePrimaryProfessorLinks(repaired.data, repaired.data, serverConfig);
   let sha = current.sha;
-  if (provisioned.changed) {
-    const result = await updateGithubData(serverConfig, provisioned.data, current.sha, 'Provision primary Professor Links');
+  if (repaired.changed || provisioned.changed) {
+    const result = await updateGithubData(serverConfig, provisioned.data, current.sha, 'Repair and provision Professor Links');
     sha = result.contentSha;
   }
   return {

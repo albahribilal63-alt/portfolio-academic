@@ -6,7 +6,7 @@ import type { VercelRequest, VercelResponse } from '../api/_lib/platform.ts';
 import { parseAcademicArchive } from '../api/_lib/archive-schema.ts';
 import { getServerConfig } from '../api/_lib/config.ts';
 import { ApiError } from '../api/_lib/errors.ts';
-import { createIsolatedToken, decryptIsolatedToken, encryptIsolatedToken, ensurePrimaryProfessorLinks, resolveIsolatedScope } from '../api/_lib/isolated-links.ts';
+import { activeIsolatedTokenUrls, createIsolatedToken, decryptIsolatedToken, encryptIsolatedToken, ensurePrimaryProfessorLinks, hashIsolatedToken, repairUnreadableIsolatedLinkTokens, resolveIsolatedScope } from '../api/_lib/isolated-links.ts';
 import { createSessionCookie } from '../api/_lib/session.ts';
 import tokenHandler from '../api/admin/isolated-link-token.ts';
 import dataHandler from '../api/admin/data.ts';
@@ -361,6 +361,45 @@ test('primary link provisioning is idempotent, stable across edits, and preserve
   );
 });
 
+test('unreadable active isolated tokens are reissued under the current key without changing their scopes', () => {
+  const currentConfig = getServerConfig();
+  const oldConfig = { ...currentConfig, adminSessionSecret: randomBytes(48).toString('base64url') };
+  const oldToken = createIsolatedToken();
+  const activeLink = makeLink({
+    id: 'rotated-key-link',
+    scopeType: 'activity',
+    scopeId: activityOne.id,
+    tokenHash: oldToken.tokenHash,
+    tokenCiphertext: encryptIsolatedToken(oldConfig, oldToken.token),
+    purpose: 'primary-professor',
+    expiresAt: null,
+  });
+  const revokedLink = makeLink({ id: 'revoked-link', status: 'revoked' });
+  const source = { ...archive, isolatedLinks: [activeLink, revokedLink] };
+
+  const repaired = repairUnreadableIsolatedLinkTokens(source, currentConfig);
+  const repairedActive = repaired.data.isolatedLinks!.find((link) => link.id === activeLink.id)!;
+  const repairedRevoked = repaired.data.isolatedLinks!.find((link) => link.id === revokedLink.id)!;
+  const urls = activeIsolatedTokenUrls(repaired.data.isolatedLinks!, currentConfig);
+
+  assert.equal(repaired.changed, true);
+  assert.equal(repaired.issuedTokens.length, 1);
+  assert.equal(repairedActive.scopeType, activeLink.scopeType);
+  assert.equal(repairedActive.scopeId, activeLink.scopeId);
+  assert.equal(repairedActive.status, activeLink.status);
+  assert.equal(repairedActive.expiresAt, activeLink.expiresAt);
+  assert.equal(repairedActive.purpose, activeLink.purpose);
+  assert.notEqual(repairedActive.tokenHash, activeLink.tokenHash);
+  assert.equal(repairedRevoked.tokenHash, revokedLink.tokenHash);
+  assert.equal(decryptIsolatedToken(currentConfig, repairedActive.tokenCiphertext), repaired.issuedTokens[0]!.token);
+  assert.deepEqual(urls, repaired.issuedTokens);
+  assert.equal(JSON.stringify(repaired.data).includes(repaired.issuedTokens[0]!.token), false);
+
+  const repeated = repairUnreadableIsolatedLinkTokens(repaired.data, currentConfig);
+  assert.equal(repeated.changed, false);
+  assert.deepEqual(repeated.issuedTokens, []);
+});
+
 test('Module and Activity lifecycle writes provision, preserve, revoke, reactivate, and remove primary links', async () => {
   const legacyToken = createIsolatedToken();
   const legacyLink = makeLink({ id: 'legacy-manual-link', scopeId: moduleOne.id, tokenHash: legacyToken.tokenHash });
@@ -422,6 +461,12 @@ test('Module and Activity lifecycle writes provision, preserve, revoke, reactiva
   createdLinks = (savedData.isolatedLinks ?? []).filter((link) => link.purpose === 'primary-professor');
   assert.equal(createdLinks.length, 4);
   assert.equal(savedData.isolatedLinks?.some((link) => link.id === legacyLink.id), true);
+  const repairedLegacyToken = migration.links.find(({ id }) => id === legacyLink.id)?.token;
+  assert.ok(repairedLegacyToken);
+  assert.equal(savedData.isolatedLinks?.find((link) => link.id === legacyLink.id)?.tokenHash, hashIsolatedToken(repairedLegacyToken));
+  const repairedLegacyScope = await resolve(repairedLegacyToken);
+  assert.equal(repairedLegacyScope.statusCode, 200);
+  assert.equal((repairedLegacyScope.payload as { scope: { scopeId: string } }).scope.scopeId, moduleOne.id);
   assert.equal(JSON.stringify(savedData).includes(migration.links[0]!.token), false);
   assert.equal(JSON.stringify(migrationResponse.payload).includes(process.env.GITHUB_PAT!), false);
 
