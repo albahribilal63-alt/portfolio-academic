@@ -1,0 +1,9 @@
+{
+  "rewrites": [
+    { "source": "/admin", "destination": "/" },
+    { "source": "/admin/:path*", "destination": "/" },
+    { "source": "/admin-portal-x97", "destination": "/" },
+    { "source": "/admin-portal-x97/:path*", "destination": "/" },
+    { "source": "/assessment/:token", "destination": "/" }
+  ]
+}
