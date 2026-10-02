@@ -1,0 +1,22 @@
+node_modules/
+dist/
+coverage/
+.nyc_output/
+.npm/
+.env
+.env.*
+!.env.example
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vercel
+/ChatGPT Image*
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+/screenshots/
