@@ -402,12 +402,24 @@ test('years-only PUT preserves unchanged incomplete profile and unknown non-year
 
 test('server configuration fails closed when a required secret is absent', () => {
   delete process.env.ADMIN_SESSION_SECRET;
-  assert.throws(
-    () => getServerConfig(),
-    (error: unknown) => error instanceof ApiError
-      && error.status === 503
-      && error.safeMessage === 'Admin API is not configured.',
-  );
+  const originalConsoleError = console.error;
+  const diagnostics: string[] = [];
+  console.error = (message?: unknown) => { diagnostics.push(String(message)); };
+  try {
+    assert.throws(
+      () => getServerConfig(),
+      (error: unknown) => error instanceof ApiError
+        && error.status === 503
+        && error.safeMessage === 'Admin API is not configured.',
+    );
+  } finally {
+    console.error = originalConsoleError;
+  }
+  assert.deepEqual(JSON.parse(diagnostics[0]!), {
+    event: 'admin_configuration_invalid',
+    variable: 'ADMIN_SESSION_SECRET',
+    reason: 'missing',
+  });
 });
 
 test('localhost bypass requires explicit development opt-in and exact loopback host matching', () => {
